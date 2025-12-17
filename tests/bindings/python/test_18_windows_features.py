@@ -363,7 +363,6 @@ class TestVendorPropertyInterface:
         assert hasattr(duvc_ctl, 'query_vendor_property_support')
         assert callable(duvc_ctl.query_vendor_property_support)
 
-@pytest.mark.skipif(True, reason="Skipping Logitech property tests due to unknown expecations")
 class TestLogitechExtensionInterface:
     """Test Logitech extension interfaces."""
     
@@ -398,7 +397,6 @@ class TestLogitechExtensionInterface:
         assert hasattr(duvc_ctl, 'supports_logitech_properties')
         assert callable(duvc_ctl.supports_logitech_properties)
 
-@pytest.mark.skipif(True, reason="Skipping Logitech property tests due to unknown expecations")
 class TestLogitechPropertyEnum:
     """Test LogitechProperty enum values."""
     
@@ -437,16 +435,47 @@ class TestLogitechPropertyEnum:
         from duvc_ctl import LogitechProperty
         
         assert hasattr(LogitechProperty, 'LedIndicator')
-    
-    def test_logitech_property_values_are_int(self):
-        """Test LogitechProperty values are integers."""
-        if not WINDOWS_ONLY:
-            pytest.skip("Windows-only feature")
         
+    def test_logitech_property_values_are_int(self):
+        """Verify LogitechProperty enum members are accessible and convertible to integers."""
         from duvc_ctl import LogitechProperty
         
-        assert isinstance(LogitechProperty.RightLight, int)
-        assert isinstance(LogitechProperty.FaceTracking, int)
+        # Verify class exists and is callable as enum-like
+        assert callable(LogitechProperty), "LogitechProperty should be class-like for enum access"
+        
+        # Dynamically check all non-property members from dir() are int-convertible
+        member_values = []
+        for member_name in dir(LogitechProperty):
+            if not member_name.startswith('_'):  # Skip private attrs
+                member = getattr(LogitechProperty, member_name)
+                if isinstance(member, property):  # Skip built-in properties like 'name', 'value'
+                    continue
+                try:
+                    value = int(member)  # Pybind11 enums allow int() coercion
+                    assert isinstance(value, int), f"{member_name} should coerce to int, got {type(value)}"
+                    member_values.append((member_name, value))
+                except (TypeError, ValueError) as e:
+                    pytest.fail(f"{member_name} failed int conversion: {e} (got {type(member)})")
+        
+        # Verify known members (from C++ binding) are present with correct values
+        known_members = {
+            'RightLight': 1,
+            'RightSound': 2,
+            'FaceTracking': 3,
+            'LedIndicator': 4,
+            'ProcessorUsage': 5,
+            'RawDataBits': 6,
+            'FocusAssist': 7,
+            'VideoStandard': 8,
+            'DigitalZoomROI': 9,
+            'TiltPan': 10
+        }
+        for name, expected_value in known_members.items():
+            member = getattr(LogitechProperty, name, None)
+            assert member is not None, f"Missing known member {name}"
+            assert int(member) == expected_value, f"{name} should be {expected_value}, got int({member}) == {int(member)}"
+        
+        assert len(member_values) == len(known_members), "Exactly expected members should be present (no extras)"
 
 
 class TestDirectShowWrapperInterfaces:
@@ -478,67 +507,50 @@ class TestDirectShowWrapperInterfaces:
 # WITH CAMERA TESTS - Integration with real Windows devices
 # ============================================================================
 
-@pytest.mark.skipif(True, reason="Skipping vendor property tests due to unknown expecations")
-@pytest.mark.hardware
 class TestKsPropertySetWithHardware:
-    """Test KsPropertySet with real device."""
+    """Test KsPropertySet with real hardware (requires camera)."""
     
-    def test_kspropertyse_instantiation(self, test_device):
-        """Test KsPropertySet can be created for device."""
-        if not WINDOWS_ONLY:
-            pytest.skip("Windows-only feature")
-        
-        from duvc_ctl import KsPropertySet
-        
-        if test_device is None:
-            pytest.skip("No test device available")
-        
-        ks = KsPropertySet(test_device)
-        
-        assert isinstance(ks, KsPropertySet)
-    
-    def test_kspropertyse_isvalid(self, test_device):
-        """Test KsPropertySet.is_valid() method."""
-        if not WINDOWS_ONLY:
-            pytest.skip("Windows-only feature")
-        
-        from duvc_ctl import KsPropertySet
-        
-        if test_device is None:
-            pytest.skip("No test device available")
-        
-        ks = KsPropertySet(test_device)
-        
-        # May be True or False depending on device
-        assert isinstance(ks.is_valid(), bool)
-    
-    def test_kspropertyse_query_support(self, test_device):
-        """Test KsPropertySet.query_support() method."""
-        if not WINDOWS_ONLY:
-            pytest.skip("Windows-only feature")
-        
-        from duvc_ctl import KsPropertySet, PyGUID
-        
-        if test_device is None:
-            pytest.skip("No test device available")
-        
-        ks = KsPropertySet(test_device)
-        
-        if not ks.is_valid():
-            pytest.skip("KsPropertySet not valid for this device")
-        
-        # Use Logitech property set GUID as example
-        test_guid = PyGUID("11111111-2222-3333-4444-555555555555")
-        
-        try:
-            # Query support returns int (support flags)
-            result = ks.query_support(test_guid, 0)
-            assert isinstance(result, int)
-        except Exception:
-            # May fail for non-Logitech devices
-            pass
+    @pytest.fixture(autouse=True)
+    def setup_device(self):
+        if not duvc_ctl.devices:
+            pytest.skip("No camera connected: duvc_ctl.list_devices()")
+        devices = list(duvc_ctl.list_devices())
+        self.device = devices[0]  # Use first device
+        result = duvc_ctl.open_camera(self.device)
+        if not result.is_ok():
+            pytest.skip(f"Cannot open camera: {result.error}")
+        self.camera = result.value
+        yield
 
-@pytest.mark.skipif(True, reason="Skipping vendor property tests due to unknown expecations")
+    
+    @pytest.mark.skipif(not duvc_ctl.devices, reason="Hardware test requires camera")
+    def test_kspropertyse_instantiation(self):
+        """Test KsPropertySet instantiation with hardware."""
+        ks = duvc_ctl.KsPropertySet(self.device)
+        assert ks.is_valid()
+    
+    @pytest.mark.skipif(not duvc_ctl.devices, reason="Hardware test requires camera")
+    def test_kspropertyse_isvalid(self):
+        """Test KsPropertySet.is_valid() method."""
+        ks = duvc_ctl.KsPropertySet(self.device)
+        assert ks.is_valid()
+    
+    @pytest.mark.skipif(not duvc_ctl.devices, reason="Hardware test requires camera")
+    def test_kspropertyse_query_support(self):
+        """Test KsPropertySet.query_support() method."""
+        ks = duvc_ctl.KsPropertySet(self.device)
+        
+        # query_support expects (GUID property_set, int property_id)
+        # PROPSETID_VIDCAP_VIDEOPROCAMP = {C6E13370-30AC-11d0-A18C-00A0C9118956}
+        # VideoProcAmp_Brightness = 0
+        vidproc_guid = duvc_ctl.PyGUID("C6E13370-30AC-11d0-A18C-00A0C9118956")
+        brightness_id = 0  # VideoProcAmp_Brightness
+        
+        result = ks.query_support(vidproc_guid, brightness_id)  # CHANGE: Remove .guid
+        
+        # Should either succeed or return NOT_SUPPORTED (device-dependent)
+        assert result.is_ok() or result.error().code() == duvc_ctl.ErrorCode.PropertyNotSupported
+
 @pytest.mark.hardware
 class TestVendorPropertiesWithHardware:
     """Test vendor property functions with real device."""
@@ -599,13 +611,13 @@ class TestVendorPropertiesWithHardware:
         assert isinstance(result, int)  # Returns support flags
 
 
-@pytest.mark.skipif(True, reason="Skipping Logitech property tests due to unknown expecations")
+#@pytest.mark.skipif(True, reason="Skipping Logitech property tests due to unknown expecations")
 @pytest.mark.hardware
 class TestLogitechPropertiesWithHardware:
     """Test Logitech property functions with real device."""
     
     def test_supports_logitech_properties_returns_bool(self, test_device):
-        """Test supports_logitech_properties() returns bool."""
+        """Test supports_logitech_properties() returns BoolResult."""
         if not WINDOWS_ONLY:
             pytest.skip("Windows-only feature")
         
@@ -616,8 +628,12 @@ class TestLogitechPropertiesWithHardware:
         
         result = supports_logitech_properties(test_device)
         
-        assert isinstance(result, bool)
-    
+        # Returns BoolResult, not raw bool
+        assert hasattr(result, 'is_ok')  # Result type
+        if result.is_ok():
+            assert isinstance(result.value(), bool)
+
+        
     def test_get_logitech_property_with_non_logitech_device(self, test_device):
         """Test get_logitech_property() with non-Logitech device."""
         if not WINDOWS_ONLY:
@@ -794,4 +810,4 @@ class TestWindowsErrorDecoding:
 # ============================================================================
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])
+    pytest.main([__file__, "-v", "-s", "--tb=short"])
